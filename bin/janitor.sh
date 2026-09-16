@@ -79,9 +79,10 @@ esac
 # masquerade as "nothing to do".
 if ! /bin/ls "$WATCH_DIR" >/dev/null 2>&1; then
   die "No permission to read $WATCH_DIR.
-     macOS is blocking this. Grant Full Disk Access to:
-       $APP_PATH
-     System Settings > Privacy & Security > Full Disk Access > +" 78
+     macOS is blocking this app from reading that folder. Turn it on:
+       System Settings > Privacy & Security > Files and Folders
+         > FleetOS Downloads Janitor > Downloads Folder
+     (Full Disk Access for $APP_PATH also works.)" 78
 fi
 
 if [ ! -d "$TRASH_DIR" ]; then
@@ -91,9 +92,10 @@ fi
 probe="$TRASH_DIR/.fleetos-janitor-write-test.$$"
 if ! (: > "$probe") 2>/dev/null; then
   die "No permission to write to $TRASH_DIR.
-     macOS is blocking this. Grant Full Disk Access to:
-       $APP_PATH
-     System Settings > Privacy & Security > Full Disk Access > +" 78
+     macOS is blocking this app from writing to the Trash. Turn it on:
+       System Settings > Privacy & Security > Files and Folders
+         > FleetOS Downloads Janitor
+     (Full Disk Access for $APP_PATH also works.)" 78
 fi
 rm -f "$probe"
 

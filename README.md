@@ -29,19 +29,9 @@ cd fleetos-downloads-janitor
 
 (No `git`? [Download the ZIP](https://github.com/nickj-11/fleetos-downloads-janitor/archive/refs/heads/main.zip), unzip it, then drag the folder into Terminal after typing `cd ` and run `./install.sh`.)
 
-The installer will open System Settings and ask you to do **one thing, once**:
+macOS will ask **once** whether the app may look in your Downloads folder. Click **Allow**. That is the entire setup — there is nothing to configure in System Settings, and no Full Disk Access needed.
 
-> **System Settings → Privacy & Security → Full Disk Access**
-> → click the **`+`** button *under* the list
-> → select **FleetOS Downloads Janitor** (in Applications) → **Open**
-> → make sure its switch is **ON**
-
-That is the whole setup. macOS does not let *any* background task touch your Downloads or Trash folder until you say so — there is no way around it, for any tool. This is that one permission.
-
-Two things trip people up here:
-
-- **There is no existing row to flip.** The app is not in that list until you add it with `+`. If you are scanning the list for it, you will not find it.
-- **If the installer put the app in `~/Applications`** (it says which path it used), the **Applications** shortcut in the file picker sidebar will *not* show it — that shortcut points at the system `/Applications`, a different folder with the same name. Press **Cmd-Shift-G** and paste `~/Applications` instead.
+The installer then checks that a sweep actually ran and tells you either `==> Working` or exactly what is still wrong. It does not assume.
 
 Confirm it is working:
 
@@ -49,7 +39,9 @@ Confirm it is working:
 tail -5 ~/Library/Logs/fleetos-downloads-janitor.log
 ```
 
-You want to see a line like `swept /Users/you/Downloads -- trashed 234 file(s) (83 MB), 0 failure(s)`. If it says *No permission to read* instead, the switch above is not on yet.
+You want to see a line like `swept /Users/you/Downloads -- trashed 234 file(s) (83 MB), 0 failure(s)`. If it says *No permission to read* instead, the prompt was missed or declined — the log says exactly how to fix it.
+
+A scheduled sweep takes about half a minute (a background app launch is slow); a run you start yourself takes a second or two. Either way it is invisible — no window, no Dock icon.
 
 Then delete the folder you cloned. The janitor does not need it.
 
@@ -93,7 +85,7 @@ Want it to clean up something else entirely — Wheelbase exports, bank statemen
 launchctl kickstart -k gui/$UID/com.fleetos.downloads-janitor
 
 # See what it would trash, without trashing anything
-"$HOME/Applications/FleetOS Downloads Janitor.app/Contents/MacOS/janitor" --dry-run
+"/Applications/FleetOS Downloads Janitor.app/Contents/Resources/janitor.sh" --dry-run
 
 # Read the log
 tail -20 ~/Library/Logs/fleetos-downloads-janitor.log
@@ -108,7 +100,7 @@ launchctl print gui/$UID/com.fleetos.downloads-janitor | grep -E 'state|last exi
 ./uninstall.sh
 ```
 
-Removes the app and the scheduled job. Your files, your Trash, and your config are left alone. You can also remove the leftover entry from Full Disk Access afterwards.
+Removes the app and the scheduled job. Your files, your Trash, and your config are left alone. macOS drops the permission with the app.
 
 ## FAQ
 
@@ -118,8 +110,14 @@ No. Nothing is touched until it has sat there for 2 hours, and the import happen
 **Where do the files go?**
 The Trash. They stay there until you empty it, or for 30 days if you have "Remove items from Trash after 30 days" turned on.
 
-**Why does it need Full Disk Access?**
-Because `~/Downloads` and `~/.Trash` are protected folders on macOS, and a scheduled background job has no other way to reach them. It only ever reads the one folder you point it at.
+**Why does it ask for permission at all?**
+`~/Downloads` is a protected folder on macOS. Any tool that reads it needs your say-so — there is no way around that, for any tool. It asks for the Downloads folder only, not Full Disk Access.
+
+**Why is it an app instead of just a script?**
+Because macOS attaches permissions to *applications*, identified by their compiled executable. A shell script cannot hold a permission even inside a `.app` — the system sees `/bin/bash`, which can never be granted anything, so a plain scheduled script gets "Operation not permitted" forever with nothing you can click to fix it. The app is a thin wrapper (built on your machine by `osacompile`, which ships with macOS) that exists purely to have an identity you can approve.
+
+**If I click "Don't Allow" by mistake?**
+Turn it back on at System Settings → Privacy & Security → Files and Folders → FleetOS Downloads Janitor → Downloads Folder. The log will tell you that is what it is waiting on.
 
 **Does it phone home / need an account?**
 No. It is about 150 lines of shell script. Read it: [`bin/janitor.sh`](bin/janitor.sh).

@@ -24,6 +24,6 @@ cat <<DONE
     Kept (delete by hand if you want them gone):
       ~/.config/fleetos-downloads-janitor/
       ~/Library/Logs/fleetos-downloads-janitor.log
-    You may also want to remove the now-dead Full Disk Access entry in
-    System Settings > Privacy & Security > Full Disk Access.
+    macOS drops the folder permission along with the app; there is no
+    leftover entry for you to clean up.
 DONE

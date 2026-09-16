@@ -8,9 +8,9 @@ set -euo pipefail
 LABEL="com.fleetos.downloads-janitor"
 APP_NAME="FleetOS Downloads Janitor"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Prefer /Applications: the "Applications" shortcut in the Full Disk Access file
-# picker points there, so users can find the app without typing a path. Fall back
-# to ~/Applications when /Applications is not writable (non-admin accounts).
+# Prefer /Applications: it is where macOS expects applications to live, and it is
+# where any permissions UI will point you if you ever need to find this app by
+# hand. Fall back to ~/Applications when /Applications is not writable.
 if [ -w /Applications ]; then
   APP_PARENT="/Applications"
 else
@@ -24,9 +24,13 @@ INTERVAL_SECONDS="${FDJ_INTERVAL_SECONDS:-900}"   # sweep every 15 minutes
 
 echo "==> Installing $APP_NAME"
 
-# 1. Build a tiny app bundle.
-#    macOS grants file-access permission to APPLICATIONS, not to loose scripts --
-#    so the janitor ships as an app so it has an identity to grant.
+# 1. Build the app bundle.
+#    macOS attaches file-access permission to APPLICATIONS, identified by their
+#    compiled executable -- so a shell script cannot hold a permission even when
+#    it sits inside a .app (the OS sees /bin/bash, which can never be granted
+#    anything). osacompile produces a real Mach-O executable that can, and it
+#    ships on every Mac, so there is nothing for you to install.
+
 # Clear out a copy left by an earlier install in the other Applications folder,
 # so there is never more than one and you cannot approve the wrong one.
 for stale_parent in "/Applications" "$HOME/Applications"; do
@@ -38,34 +42,44 @@ for stale_parent in "/Applications" "$HOME/Applications"; do
 done
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+BUILD_DIR="$(mktemp -d)"
+trap 'rm -rf "$BUILD_DIR"' EXIT
 
-cat > "$APP/Contents/Info.plist" <<PLISTEOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleName</key>              <string>$APP_NAME</string>
-    <key>CFBundleDisplayName</key>       <string>$APP_NAME</string>
-    <key>CFBundleIdentifier</key>        <string>$LABEL</string>
-    <key>CFBundleExecutable</key>        <string>janitor</string>
-    <key>CFBundleVersion</key>           <string>1.0.0</string>
-    <key>CFBundleShortVersionString</key><string>1.0.0</string>
-    <key>CFBundlePackageType</key>       <string>APPL</string>
-    <key>LSMinimumSystemVersion</key>    <string>11.0</string>
-    <key>LSBackgroundOnly</key>          <true/>
-    <key>LSUIElement</key>               <true/>
-</dict>
-</plist>
-PLISTEOF
+cat > "$BUILD_DIR/wrapper.applescript" <<'APPLESCRIPT'
+on run
+	set appPath to POSIX path of (path to me)
+	set theScript to quoted form of (appPath & "Contents/Resources/janitor.sh")
+	try
+		do shell script theScript
+	on error errMsg
+		-- Record the failure in the log rather than showing a dialog: this runs
+		-- unattended, and a modal alert nobody is there to dismiss helps no one.
+		try
+			do shell script "printf '%s  APPLET ERROR: %s\\n' \"$(date '+%Y-%m-%d %H:%M:%S')\" " & ¬
+				quoted form of errMsg & " >> \"$HOME/Library/Logs/fleetos-downloads-janitor.log\""
+		end try
+	end try
+end run
+APPLESCRIPT
 
-cp "$SRC_DIR/bin/janitor.sh" "$APP/Contents/MacOS/janitor"
-chmod +x "$APP/Contents/MacOS/janitor"
+osacompile -o "$APP" "$BUILD_DIR/wrapper.applescript"
 
-# Ad-hoc sign so the permission you grant sticks to this app and survives updates.
+mkdir -p "$APP/Contents/Resources"
+cp "$SRC_DIR/bin/janitor.sh"  "$APP/Contents/Resources/janitor.sh"
+cp "$SRC_DIR/bin/launcher.sh" "$APP/Contents/Resources/launcher.sh"
+chmod +x "$APP/Contents/Resources/janitor.sh" "$APP/Contents/Resources/launcher.sh"
+
+PB=/usr/libexec/PlistBuddy
+IP="$APP/Contents/Info.plist"
+$PB -c "Set :CFBundleIdentifier $LABEL"          "$IP" 2>/dev/null || $PB -c "Add :CFBundleIdentifier string $LABEL"          "$IP"
+$PB -c "Set :CFBundleName $APP_NAME"             "$IP" 2>/dev/null || $PB -c "Add :CFBundleName string $APP_NAME"             "$IP"
+$PB -c "Set :CFBundleShortVersionString 1.1.0"   "$IP" 2>/dev/null || $PB -c "Add :CFBundleShortVersionString string 1.1.0"   "$IP"
+$PB -c "Add :LSUIElement bool true"              "$IP" 2>/dev/null || true
+
+# Sign last: editing Info.plist invalidates any earlier signature.
 codesign --force --deep --sign - "$APP" >/dev/null 2>&1 \
   && echo "    app     -> $APP (signed)" \
-  || echo "    app     -> $APP (unsigned -- fine, but re-grant access if you move it)"
+  || echo "    app     -> $APP (unsigned -- re-approve access if you move it)"
 
 # 2. Write a config file only if one does not already exist (never clobber your edits).
 mkdir -p "$CONFIG_DIR"
@@ -101,7 +115,8 @@ cat > "$PLIST" <<PLISTEOF
     <string>$LABEL</string>
     <key>ProgramArguments</key>
     <array>
-        <string>$APP/Contents/MacOS/janitor</string>
+        <string>/bin/bash</string>
+        <string>$APP/Contents/Resources/launcher.sh</string>
     </array>
     <key>StartInterval</key>
     <integer>$INTERVAL_SECONDS</integer>
@@ -122,39 +137,73 @@ launchctl bootout "gui/$UID/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$UID" "$PLIST"
 launchctl enable "gui/$UID/$LABEL" 2>/dev/null || true
 
-# 4. The one manual step.
-cat <<BANNER
+# 4. Trigger the permission prompt now, while you are sitting here.
+#    macOS asks once, on first access. If that first access happened later from
+#    the background schedule with nobody at the keyboard, the prompt could be
+#    missed and the denial remembered -- so we provoke it deliberately, now.
+cat <<'BANNER'
 
 -------------------------------------------------------------------
-  ONE STEP LEFT -- and it is the only one, ever.
+  macOS is about to ask, once, whether this app may access your
+  Downloads folder.
 
-  macOS will not let any background job touch your Downloads or
-  Trash folder until you say so. Give this app permission:
+  Click  "Allow"  (or "OK").
 
-    1. System Settings > Privacy & Security > Full Disk Access
-    2. Click the "+" button UNDER the list
-    3. Press Cmd-Shift-G and paste this exact path, then Return:
-         $APP_PARENT
-    4. Choose "$APP_NAME" and click Open
-    5. Confirm its switch is ON
-
-  Note: there is no existing row to flip -- the app is not in that list
-  until you add it with "+".
-
-  Opening that settings pane for you now...
+  That is the entire setup. There is nothing to configure in
+  System Settings.
 -------------------------------------------------------------------
 
 BANNER
 
-open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" 2>/dev/null || true
-open -R "$APP" 2>/dev/null || true
+# Remember where the log ends NOW, so a line left over from an earlier install
+# can never be mistaken for proof that this one works.
+before=$(grep -cE '^[0-9]{4}-' "$LOG_FILE" 2>/dev/null || echo 0)
 
-cat <<DONE
-Once the switch is on, it sweeps every $((INTERVAL_SECONDS / 60)) minutes, forever.
+# Run exactly what launchd will run, so this verifies the real path rather
+# than an approximation of it.
+/bin/bash "$APP/Contents/Resources/launcher.sh" >/dev/null 2>&1 &
 
-  Check it worked:  tail -5 "$LOG_FILE"
-  Sweep right now:  launchctl kickstart -k gui/\$UID/$LABEL
-  Uninstall:        "$SRC_DIR/uninstall.sh"
+# 5. Verify it actually worked, rather than assuming.
+printf "Waiting for the permission decision"
+ok=0
+for _ in $(seq 1 45); do
+  printf "."
+  sleep 1
+  now=$(grep -cE '^[0-9]{4}-' "$LOG_FILE" 2>/dev/null || echo 0)
+  [ "$now" -gt "$before" ] || continue          # nothing new yet -- keep waiting
+  last=$(grep -E '^[0-9]{4}-' "$LOG_FILE" | tail -1)
+  case "$last" in
+    *swept*) ok=1; break ;;
+    *ABORT*) break ;;                            # a fresh, definite failure
+  esac
+done
+echo ""
+echo ""
 
-You can delete this folder afterwards -- the janitor does not need it.
+if [ "$ok" = "1" ]; then
+  cat <<DONE
+==> Working. It sweeps every $((INTERVAL_SECONDS / 60)) minutes from now on, forever.
+
+    $(grep -E '^[0-9]{4}-' "$LOG_FILE" | tail -1)
+
+    Check on it:  tail -5 "$LOG_FILE"
+    Sweep now:    launchctl kickstart -k gui/\$UID/$LABEL
+    Uninstall:    "$SRC_DIR/uninstall.sh"
+
+You can delete this folder now -- the janitor does not need it.
 DONE
+else
+  cat <<NOTYET
+==> Not confirmed yet.
+
+    If you did not see a prompt, or you clicked "Don't Allow", turn access on by hand:
+      System Settings > Privacy & Security > Files and Folders
+        > $APP_NAME > Downloads Folder  (switch ON)
+
+    Then re-check with:
+      launchctl kickstart -k gui/\$UID/$LABEL && sleep 3 && tail -3 "$LOG_FILE"
+
+    The log will tell you exactly what it is blocked on:
+      tail -5 "$LOG_FILE"
+NOTYET
+fi

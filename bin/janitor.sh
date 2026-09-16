@@ -24,6 +24,13 @@ LOG_FILE="${FDJ_LOG_FILE:-$HOME/Library/Logs/fleetos-downloads-janitor.log}"
 LOG_MAX_BYTES="${FDJ_LOG_MAX_BYTES:-1048576}"
 DRY_RUN="${FDJ_DRY_RUN:-0}"
 
+# Where this script lives, so permission errors can name the exact app to approve.
+SELF="$0"
+case "$SELF" in
+  */*.app/Contents/MacOS/*) APP_PATH="${SELF%%.app/Contents/MacOS/*}.app" ;;
+  *)                        APP_PATH="the FleetOS Downloads Janitor app" ;;
+esac
+
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
@@ -73,7 +80,7 @@ esac
 if ! /bin/ls "$WATCH_DIR" >/dev/null 2>&1; then
   die "No permission to read $WATCH_DIR.
      macOS is blocking this. Grant Full Disk Access to:
-       ~/Applications/FleetOS Downloads Janitor.app
+       $APP_PATH
      System Settings > Privacy & Security > Full Disk Access > +" 78
 fi
 
@@ -85,7 +92,7 @@ probe="$TRASH_DIR/.fleetos-janitor-write-test.$$"
 if ! (: > "$probe") 2>/dev/null; then
   die "No permission to write to $TRASH_DIR.
      macOS is blocking this. Grant Full Disk Access to:
-       ~/Applications/FleetOS Downloads Janitor.app
+       $APP_PATH
      System Settings > Privacy & Security > Full Disk Access > +" 78
 fi
 rm -f "$probe"

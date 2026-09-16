@@ -8,7 +8,15 @@ set -euo pipefail
 LABEL="com.fleetos.downloads-janitor"
 APP_NAME="FleetOS Downloads Janitor"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP="$HOME/Applications/$APP_NAME.app"
+# Prefer /Applications: the "Applications" shortcut in the Full Disk Access file
+# picker points there, so users can find the app without typing a path. Fall back
+# to ~/Applications when /Applications is not writable (non-admin accounts).
+if [ -w /Applications ]; then
+  APP_PARENT="/Applications"
+else
+  APP_PARENT="$HOME/Applications"
+fi
+APP="$APP_PARENT/$APP_NAME.app"
 CONFIG_DIR="$HOME/.config/fleetos-downloads-janitor"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG_FILE="$HOME/Library/Logs/fleetos-downloads-janitor.log"
@@ -19,6 +27,16 @@ echo "==> Installing $APP_NAME"
 # 1. Build a tiny app bundle.
 #    macOS grants file-access permission to APPLICATIONS, not to loose scripts --
 #    so the janitor ships as an app so it has an identity to grant.
+# Clear out a copy left by an earlier install in the other Applications folder,
+# so there is never more than one and you cannot approve the wrong one.
+for stale_parent in "/Applications" "$HOME/Applications"; do
+  [ "$stale_parent" = "$APP_PARENT" ] && continue
+  if [ -d "$stale_parent/$APP_NAME.app" ]; then
+    rm -rf "$stale_parent/$APP_NAME.app"
+    echo "    cleaned  -> removed old copy at $stale_parent/$APP_NAME.app"
+  fi
+done
+
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 
@@ -114,10 +132,14 @@ cat <<BANNER
   Trash folder until you say so. Give this app permission:
 
     1. System Settings > Privacy & Security > Full Disk Access
-    2. Click "+"
-    3. Press Cmd-Shift-G and paste:  ~/Applications
-    4. Choose "$APP_NAME"
-    5. Make sure its switch is ON
+    2. Click the "+" button UNDER the list
+    3. Press Cmd-Shift-G and paste this exact path, then Return:
+         $APP_PARENT
+    4. Choose "$APP_NAME" and click Open
+    5. Confirm its switch is ON
+
+  Note: there is no existing row to flip -- the app is not in that list
+  until you add it with "+".
 
   Opening that settings pane for you now...
 -------------------------------------------------------------------
@@ -125,7 +147,7 @@ cat <<BANNER
 BANNER
 
 open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" 2>/dev/null || true
-open "$HOME/Applications" 2>/dev/null || true
+open -R "$APP" 2>/dev/null || true
 
 cat <<DONE
 Once the switch is on, it sweeps every $((INTERVAL_SECONDS / 60)) minutes, forever.

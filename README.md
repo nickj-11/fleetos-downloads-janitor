@@ -31,10 +31,17 @@ cd fleetos-downloads-janitor
 
 The installer will open System Settings and ask you to do **one thing, once**:
 
-> **System Settings → Privacy & Security → Full Disk Access → `+` →**
-> Cmd-Shift-G → `~/Applications` → pick **FleetOS Downloads Janitor** → switch it **ON**
+> **System Settings → Privacy & Security → Full Disk Access**
+> → click the **`+`** button *under* the list
+> → select **FleetOS Downloads Janitor** (in Applications) → **Open**
+> → make sure its switch is **ON**
 
 That is the whole setup. macOS does not let *any* background task touch your Downloads or Trash folder until you say so — there is no way around it, for any tool. This is that one permission.
+
+Two things trip people up here:
+
+- **There is no existing row to flip.** The app is not in that list until you add it with `+`. If you are scanning the list for it, you will not find it.
+- **If the installer put the app in `~/Applications`** (it says which path it used), the **Applications** shortcut in the file picker sidebar will *not* show it — that shortcut points at the system `/Applications`, a different folder with the same name. Press **Cmd-Shift-G** and paste `~/Applications` instead.
 
 Confirm it is working:
 
